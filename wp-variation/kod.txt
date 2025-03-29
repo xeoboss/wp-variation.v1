@@ -1,0 +1,1422 @@
+(function($) {
+    'use strict';
+
+    // DOM hazır olduğunda
+    $(document).ready(function() {
+        var WPVariation = {
+
+
+            notificationTimer: null,
+            // Ana konteyner
+            $form: $('.variations_form'),
+
+            // Başlangıç
+            init: function() {
+                // Orijinal varyasyon seçimini gizle
+                this.$form.find('.variations').hide();
+                this.$form.find('.single_variation_wrap').hide();
+
+                // Adet giriş alanını gizle (ürün sayfasında bulunan orjinal alan)
+                this.$form.find('.quantity').hide();
+
+                // Yeni varyasyon bölümünü ekle
+                this.createVariationRows();
+
+                // Olayları bağla
+                this.bindEvents();
+
+                // Orijinal varyasyon formunun görsel değişim fonksiyonunu yönet
+                this.handleImageChange();
+
+                // Overlay ve bildirim elementlerini oluştur
+                this.createNotificationElements();
+
+                console.log('init fonksiyonu çalıştı, updateTotalPrice çağrılıyor...');
+                this.updateTotalPrice();
+
+            },
+
+            // Overlay oluştururken değişiklik yapalım
+            createNotificationElements: function() {
+                // Eski overlay'leri kaldır
+                $('.wp-variation-overlay, .woocommerce-variation-add-to-cart-notification, .added-to-cart-notification').remove();
+
+                // Daha basit bir bildirim oluştur
+                var $notification = $('<div class="wp-variation-notification">' +
+                    '<div class="notification-content">' +
+                    '<span class="check-icon">✓</span>' +
+                    '<p class="message">Ürünler başarıyla sepete eklendi</p>' +
+                    '</div>' +
+                    '</div>');
+
+                // Bildirimi stilize et
+                $notification.css({
+                    'display': 'none',
+                    'position': 'fixed',
+                    'top': '20px',
+                    'right': '20px',
+                    'background-color': '#4CAF50',
+                    'color': 'white',
+                    'padding': '15px 20px',
+                    'border-radius': '5px',
+                    'box-shadow': '0 2px 10px rgba(0,0,0,0.2)',
+                    'z-index': '9999'
+                });
+
+                // Bildirimi ortada gösterecek şekilde stilize et
+                $notification.css({
+                    'display': 'none',
+                    'position': 'fixed',
+                    'top': '50%',        // Sayfanın dikey ortası
+                    'left': '50%',       // Sayfanın yatay ortası
+                    'transform': 'translate(-50%, -50%)', // Tam ortalama için
+                    'background-color': '#4CAF50',
+                    'color': 'white',
+                    'padding': '12px 20px',
+                    'border-radius': '5px',
+                    'box-shadow': '0 2px 15px rgba(0,0,0,0.3)',
+                    'z-index': '9999',
+                    'text-align': 'center',
+                    'max-width': '300px', // Maksimum genişliği sınırla
+                    'width': 'auto',     // İçeriğe göre genişlik
+                    'min-width': '220px' // Minimum genişlik
+                });
+
+
+                $notification.find('.notification-content').css({
+                    'display': 'flex',
+                    'align-items': 'center',
+                    'justify-content': 'center' // Yatay ortalama
+                });
+
+                $notification.find('.check-icon').css({
+                    'font-size': '24px',
+                    'margin-right': '10px'
+                });
+
+                // Body'ye ekle
+                $('body').append($notification);
+            },
+            // WPVariation nesnesine ekleyin:
+            updateTotalPrice: function() {
+                console.log('updateTotalPrice fonksiyonu çağrıldı');
+                var total = 0;
+
+                // Varyasyon satırlarını kontrol et
+                var $rows = this.$form.find('.wp-variation-row');
+                console.log('Bulunan varyasyon satırı sayısı:', $rows.length);
+
+                $rows.each(function(index) {
+                    var $row = $(this);
+
+                    // Bu satırdaki seçili varyasyonun fiyatı
+                    var variationId = $row.data('variation_id');
+                    var variation = $row.data('variation');
+
+                    console.log('Satır', index, 'variation ID:', variationId);
+                    console.log('Satır', index, 'variation data:', variation);
+
+                    if (variationId && variation && variation.display_price) {
+                        total += parseFloat(variation.display_price);
+                        console.log('Fiyat eklendi:', variation.display_price);
+                    } else if ($row.find('.variation-option.selected').length > 0) {
+                        // Alternatif yöntem: Seçili varyasyon elementlerinden fiyat oku
+                        $row.find('.variation-option.selected').each(function() {
+                            var price = parseFloat($(this).data('price') || 0);
+                            console.log('Seçili opsiyon fiyatı:', price);
+                            total += price;
+                        });
+                    }
+                });
+
+                console.log('Toplam fiyat:', total);
+
+                // Butonlar ve toplam fiyat için konteyner oluştur veya al
+                var $buttonsContainer = this.$form.find('.wp-variation-buttons-container');
+
+                // Eğer konteyner yoksa veya zaten varsa ama yerini değiştirmek istiyorsak
+                if ($buttonsContainer.length === 0) {
+                    $buttonsContainer = $('<div class="wp-variation-buttons-container"></div>');
+
+                    // Varyasyon satırlarının olduğu konteyneri bul
+                    // (genellikle son varyasyon satırının ebeveyni olur)
+                    if ($rows.length > 0) {
+                        var $variationContainer = $rows.last().parent();
+
+                        // Butonu doğrudan son varyasyon satırından hemen sonra ekle
+                        // append yerine after kullanarak direkt varyasyon konteynerinden sonra ekliyoruz
+                        $variationContainer.after($buttonsContainer);
+                    } else {
+                        // Hiç varyasyon satırı yoksa form sonuna ekle (fallback)
+                        this.$form.append($buttonsContainer);
+                    }
+                } else {
+                    // Konteyner zaten var, konumunu tazelemek için kaldırıp yeniden ekleyebiliriz
+                    // Ancak içeriğini kaybetmemek için önce içeriği saklamalıyız
+                    var $content = $buttonsContainer.children().detach();
+                    $buttonsContainer.remove();
+
+                    // Varyasyon konteynerini bul ve arkasına yeniden ekle
+                    if ($rows.length > 0) {
+                        var $variationContainer = $rows.last().parent();
+                        $variationContainer.after($buttonsContainer);
+                        $buttonsContainer.append($content); // İçeriği geri yükle
+                    } else {
+                        this.$form.append($buttonsContainer);
+                        $buttonsContainer.append($content); // İçeriği geri yükle
+                    }
+                }
+
+                // Butonlar için sol grup
+                var $buttonGroup = $buttonsContainer.find('.wp-variation-button-group');
+                if ($buttonGroup.length === 0) {
+                    $buttonGroup = $('<div class="wp-variation-button-group"></div>');
+                    $buttonsContainer.append($buttonGroup);
+                }
+
+                // Toplam fiyat gösterme alanı
+                var $totalPriceDisplay = $buttonsContainer.find('.total-variations-price');
+                if ($totalPriceDisplay.length === 0) {
+                    $totalPriceDisplay = $('<div class="total-variations-price"></div>');
+                    $buttonsContainer.append($totalPriceDisplay);
+                }
+
+                // Sepete Ekle ve Başka Ekle butonlarını oluştur veya güncelle
+                var $addToCartButton = $buttonGroup.find('.wp-variation-add-to-cart');
+                if ($addToCartButton.length === 0) {
+                    $addToCartButton = this.$form.find('.wp-variation-add-to-cart');
+                    if ($addToCartButton.length > 0) {
+                        $addToCartButton.detach().appendTo($buttonGroup);
+                    } else {
+                        $addToCartButton = $('<button type="submit" class="wp-variation-add-to-cart">Sepete Ekle</button>');
+                        $buttonGroup.append($addToCartButton);
+                    }
+                }
+
+                var $addAnotherButton = $buttonGroup.find('.wp-variation-add-another');
+                if ($addAnotherButton.length === 0) {
+                    $addAnotherButton = this.$form.find('.wp-variation-add-another');
+                    if ($addAnotherButton.length > 0) {
+                        $addAnotherButton.detach().appendTo($buttonGroup);
+                    } else {
+                        $addAnotherButton = $('<button type="button" class="wp-variation-add-another">Başka Ekle</button>');
+                        $buttonGroup.append($addAnotherButton);
+                    }
+                }
+
+                // Fiyatı formatla ve göster
+                if (total > 0) {
+                    var formattedPrice = this.formatPrice(total);
+                    $totalPriceDisplay.html('<strong>Toplam:</strong> <span class="amount">' + formattedPrice + '</span>');
+                    $totalPriceDisplay.show();
+                } else {
+                    $totalPriceDisplay.hide();
+                }
+
+                // Konteyner için CSS - margin-top ve padding-top değerlerini sıfıra yakın yapıyoruz
+                $buttonsContainer.css({
+                    'display': 'flex',
+                    'justify-content': 'space-between',
+                    'align-items': 'center',
+                    'margin-top': '-20px', // Daha az boşluk bırakması için düşürüldü
+                    'padding-top': '10px', // Daha az boşluk bırakması için düşürüldü
+                    'border-top': '1px solid #eee',
+                    'flex-wrap': 'wrap',
+                    'width': '100%' // Tam genişlik sağla
+                });
+
+                // Buton grubu için CSS
+                $buttonGroup.css({
+                    'display': 'flex',
+                    'gap': '10px',
+                    'align-items': 'center',
+                    'flex-shrink': '0' // Buton grubunun sıkışmamasını sağlar
+                });
+
+                // "Sepete Ekle" buton stili
+                $addToCartButton.css({
+                    'background-color': '#4CAF50',
+                    'color': 'white',
+                    'border': 'none',
+                    'padding': '12px 20px',
+                    'border-radius': '30px',
+                    'cursor': 'pointer',
+                    'font-weight': '600',
+                    'font-size': '14px',
+                    'transition': 'all 0.3s ease',
+                    'box-shadow': '0 2px 5px rgba(0,0,0,0.1)',
+                    'text-align': 'center',
+                    'min-width': '120px',
+                    'transform': 'translateY(0)',
+                    'position': 'relative'
+                });
+
+                // "Başka Ekle" butonu mor renk olsun
+                $addAnotherButton.css({
+                    'background-color': '#8e44ad', // Mor renk
+                    'color': 'white',
+                    'border': 'none',
+                    'padding': '12px 20px',
+                    'border-radius': '30px',
+                    'cursor': 'pointer',
+                    'font-weight': '600',
+                    'font-size': '14px',
+                    'transition': 'all 0.3s ease',
+                    'box-shadow': '0 2px 5px rgba(0,0,0,0.1)',
+                    'text-align': 'center',
+                    'min-width': '120px',
+                    'transform': 'translateY(0)',
+                    'position': 'relative'
+                });
+
+                // Toplam fiyat için CSS - sağa hizalama iyileştirildi
+                $totalPriceDisplay.css({
+                    'display': 'block',
+                    'margin-left': 'auto', // Otomatik sol margin sağa itecek
+                    'margin-right': '0', // Sağ margin sıfır
+                    'padding': '8px 15px',
+                    'background-color': '#f7f7f7',
+                    'border-radius': '3px',
+                    'font-size': '1.1em',
+                    'border-left': '3px solid #77a464',
+                    'white-space': 'nowrap', // İçeriğin satır atlamasını engelle
+                    'flex-shrink': '0', // Toplam fiyat alanının sıkışmamasını sağlar
+                    'align-self': 'flex-end' // Sağa hizalamayı güçlendirir
+                });
+
+                $totalPriceDisplay.find('.amount').css({
+                    'color': '#77a464',
+                    'font-weight': 'bold'
+                });
+
+                // Hover efektlerini eklemek için - aynı efekt her iki butonda da olsun
+                $addToCartButton.hover(
+                    function() {
+                        $(this).css({
+                            'background-color': '#45a049',
+                            'transform': 'translateY(-3px)',
+                            'box-shadow': '0 4px 8px rgba(0,0,0,0.2)'
+                        });
+                    },
+                    function() {
+                        $(this).css({
+                            'background-color': '#4CAF50',
+                            'transform': 'translateY(0)',
+                            'box-shadow': '0 2px 5px rgba(0,0,0,0.1)'
+                        });
+                    }
+                );
+
+                $addAnotherButton.hover(
+                    function() {
+                        $(this).css({
+                            'background-color': '#7d3c98', // Mor rengin koyu tonu
+                            'transform': 'translateY(-3px)',
+                            'box-shadow': '0 4px 8px rgba(0,0,0,0.2)'
+                        });
+                    },
+                    function() {
+                        $(this).css({
+                            'background-color': '#8e44ad', // Normale dön
+                            'transform': 'translateY(0)',
+                            'box-shadow': '0 2px 5px rgba(0,0,0,0.1)'
+                        });
+                    }
+                );
+
+                // Mobil ekranlar için responsive düzenleme
+                if (window.innerWidth <= 600) {
+                    $buttonsContainer.css('flex-direction', 'column');
+                    $buttonGroup.css({
+                        'width': '100%',
+                        'margin-bottom': '15px',
+                        'justify-content': 'space-between'
+                    });
+                    $totalPriceDisplay.css({
+                        'margin-left': '0',
+                        'width': '100%',
+                        'text-align': 'center',
+                        'box-sizing': 'border-box'
+                    });
+                    $addToCartButton.css({
+                        'flex': '1',
+                        'min-width': '0'
+                    });
+                    $addAnotherButton.css({
+                        'flex': '1',
+                        'min-width': '0'
+                    });
+                }
+            },
+            formatPrice: function(price) {
+                // WooCommerce para birimi formatını kullan eğer mevcutsa
+                if (typeof woocommerce_price_format !== 'undefined') {
+                    return woocommerce_price_format.formatMoney(price);
+                }
+
+                // Basit para formatlaması
+                return price.toFixed(2) + ' ₺';
+            },
+            // Bildirimi göster
+            showNotification: function(message, type) {
+                var self = this;
+                var $notification = $('.wp-variation-notification');
+
+                // Bildirim yoksa oluştur
+                if ($notification.length === 0) {
+                    this.createNotificationElements();
+                    $notification = $('.wp-variation-notification');
+                }
+
+                // Mesajı ayarla (eğer mesaj verilmişse)
+                if (message) {
+                    $notification.find('.message').text(message);
+                }
+
+                // Zamanlayıcıyı temizle
+                if (self.notificationTimer) {
+                    clearTimeout(self.notificationTimer);
+                    self.notificationTimer = null;
+                }
+
+                // Bildirimi göster
+                $notification.stop(true, true).fadeIn(300);
+
+                // 2 saniye sonra gizle
+                self.notificationTimer = setTimeout(function() {
+                    self.hideNotification();
+                }, 2000);
+            },
+
+            // Bildirimi gizle
+            hideNotification: function() {
+                $('.wp-variation-notification').fadeOut(300);
+                if (this.notificationTimer) {
+                    clearTimeout(this.notificationTimer);
+                    this.notificationTimer = null;
+                }
+            },
+
+            // Varyasyon satırları oluştur
+            createVariationRows: function() {
+                var self = this;
+
+                // Orijinal varyasyon bölümünü kopyala ve analiz et
+                var $originalVariations = this.$form.find('.variations');
+                var $rowsContainer = $('<div class="wp-variation-rows"></div>');
+
+                // İlk varyasyon satırını ekle
+                this.addVariationRow($rowsContainer);
+
+                // Başka ekle butonu
+                var $controls = $('<div class="wp-variation-controls"></div>');
+                var $addAnother = $('<button type="button" class="wp-variation-add-another">' +
+                    wp_variation_params.i18n_add_another +
+                    '</button>');
+
+                $controls.append($addAnother);
+
+                // Sepete ekle butonu
+                var $addToCart = $('<button type="button" class="single_add_to_cart_button button alt wp-variation-add-to-cart">' +
+                    this.$form.find('.single_add_to_cart_button').text() +
+                    '</button>');
+                $addToCart.off('click').on('click', function(e) {
+                    e.preventDefault();
+
+                    // Butonun bulunduğu satırı bul
+                    var $currentRow = $(this).closest('.variation-row');
+
+                    // Seçilen varyasyon ID'sini al
+                    var variationId = $currentRow.data('variation_id');
+
+                    // Miktar değerini al (eğer miktar seçici varsa)
+                    var quantity = 1;
+                    var $quantityInput = $currentRow.find('.quantity input');
+                    if ($quantityInput.length > 0 && $quantityInput.val()) {
+                        quantity = parseInt($quantityInput.val(), 10);
+                    }
+
+                    // Eğer geçerli bir varyasyon seçilmişse
+                    if (variationId && variationId > 0) {
+                        var $button = $(this);
+
+                        // Butonun yükleniyor durumunu göster
+                        $button.addClass('loading').prop('disabled', true);
+
+                        // AJAX ile sepete ekle
+                        $.ajax({
+                            type: 'POST',
+                            url: wc_add_to_cart_params ? wc_add_to_cart_params.wc_ajax_url.toString().replace('%%endpoint%%', 'add_to_cart') : '?wc-ajax=add_to_cart',
+                            data: {
+                                product_id: self.$form.data('product_id'),
+                                variation_id: variationId,
+                                quantity: quantity,
+                                'add-to-cart': self.$form.data('product_id')
+                            },
+                            success: function(response) {
+                                if (response.error && response.product_url) {
+                                    window.location = response.product_url;
+                                    return;
+                                }
+
+                                // Başarılı ekleme
+                                if (response.fragments) {
+                                    // WooCommerce sepet fragmentlerini güncelle
+                                    $.each(response.fragments, function(key, value) {
+                                        $(key).replaceWith(value);
+                                    });
+                                }
+
+                                // Butonun durumunu güncelle ve başarı mesajı göster
+                                $button.removeClass('loading').addClass('added');
+
+                                // Başarı mesajını göster
+                                var $successMsg = $('<span class="success-msg" style="color:green;margin-left:10px;">✓ Ürün sepete eklendi!</span>');
+                                $button.after($successMsg);
+
+                                // Birkaç saniye sonra mesajı kaldır
+                                setTimeout(function() {
+                                    $successMsg.fadeOut('slow', function() {
+                                        $(this).remove();
+                                    });
+                                }, 2000);
+
+                                // WooCommerce olayını tetikle
+                                $(document.body).trigger('added_to_cart', [response.fragments, response.cart_hash, $button]);
+                            },
+                            error: function() {
+                                console.error('Sepete ekleme hatası');
+                                $button.removeClass('loading').prop('disabled', false);
+                                alert('Ürün sepete eklenirken bir hata oluştu. Lütfen tekrar deneyin.');
+                            },
+                            complete: function() {
+                                setTimeout(function() {
+                                    $button.removeClass('loading').prop('disabled', false);
+                                }, 500);
+                            }
+                        });
+                    } else {
+                        alert('Lütfen önce bir varyasyon seçin!');
+                    }
+                });
+
+                $controls.append($addToCart);
+
+                // DOM'a ekle
+                this.$form.prepend($rowsContainer);
+                this.$form.append($controls);
+            },
+
+            // Yeni varyasyon satırı ekle
+            addVariationRow: function($container) {
+                var self = this;
+                var isFirstRow = $container.find('.wp-variation-row').length === 0;
+                var currentRowCount = $container.find('.wp-variation-row').length;
+
+                // Maksimum satır sayısı kontrolü
+                if (currentRowCount >= 8) {
+                    alert('Maksimum 8 adet varyasyon eklenebilir!');
+                    return false;
+                }
+
+                // Satırı oluştur
+                var $row = $('<div class="wp-variation-row"></div>');
+                var $attributes = $('<div class="wp-variation-attributes"></div>');
+
+                // Orijinal attributeleri kopyala
+                this.$form.find('.variations tr').each(function() {
+                    var $originalLabel = $(this).find('label');
+                    var $originalSelect = $(this).find('select');
+
+                    var attributeName = $originalSelect.attr('name');
+                    var attributeId = 'wp-variation-' + attributeName + '-' + Math.floor(Math.random() * 10000);
+
+                    var $attribute = $('<div class="wp-variation-attribute"></div>');
+
+                    // Sadece ilk satırda label göster, diğerlerinde gösterme
+                    if (isFirstRow) {
+                        var $label = $('<label for="' + attributeId + '">' + $originalLabel.text() + '</label>');
+                        $attribute.append($label);
+                    }
+
+                    var $select = $originalSelect.clone();
+
+                    // Select'i sıfırla
+                    $select.attr('id', attributeId);
+                    $select.val('');
+
+                    $attribute.append($select);
+                    $attributes.append($attribute);
+                });
+
+                // Fiyat gösterimi
+                var $price = $('<div class="wp-variation-price">Seçim yapınız</div>');
+
+                // Satıra ekle
+                $row.append($attributes);
+                $row.append($price);
+
+                // İlk satır değilse silme butonu ekle
+                if (!isFirstRow) {
+                    var $remove = $('<div class="wp-variation-remove">&times;</div>');
+                    $row.append($remove);
+
+                    $remove.on('click', function() {
+                        $row.slideUp(300, function() {
+                            $(this).remove();
+                        });
+                    });
+                }
+
+                // Varyasyon değişimini dinle
+                $row.find('select').on('change', function() {
+                    // Her değişiklikte orjinal formdaki aynı select'i güncelle
+                    var name = $(this).attr('name');
+                    var value = $(this).val();
+
+                    // Orijinal formun ilgili alanını güncelle
+                    self.$form.find('.variations select[name="' + name + '"]').val(value).trigger('change');
+
+                    // Ardından bizim sıraya özel detayları güncelle
+                    self.handleVariationChange($row);
+                });
+
+                // DOM'a ekle
+                $container.append($row);
+
+                return $row;
+            },
+
+            // Eşleşen varyasyonu bul
+            findMatchingVariation: function(variations, attributes) {
+                for (var i = 0; i < variations.length; i++) {
+                    var variation = variations[i];
+                    var match = true;
+
+                    for (var attr_name in attributes) {
+                        if (attributes.hasOwnProperty(attr_name)) {
+                            var val1 = attributes[attr_name];
+                            var val2 = variation.attributes[attr_name];
+
+                            // Eğer boş değerler varsa atla
+                            if (val1 === '' || val2 === '') {
+                                continue;
+                            }
+
+                            // Değerler eşleşmiyorsa bu varyasyon değil
+                            if (val1 !== val2) {
+                                match = false;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (match) {
+                        return variation;
+                    }
+                }
+
+                return false;
+            },
+
+            handleVariationChange: function($row) {
+                var self = this;
+                var attributes = {};
+                var variations = [];
+
+                // Varyasyonları al
+                if (this.$form.data('product_variations')) {
+                    variations = this.$form.data('product_variations');
+                }
+
+                // Varyasyon satırının benzersiz kimliğini al/oluştur
+                var rowId = $row.data('row_id') || 'row_' + new Date().getTime();
+                $row.data('row_id', rowId);
+
+                // Önce varolan attribute alanlarını kontrol et
+                var existingAttributes = {};
+                jQuery('select[name^="attribute_"]').each(function(index) {
+                    var $selectAttr = jQuery(this);
+                    var attrName = $selectAttr.attr('name');
+                    var value = $selectAttr.val();
+                    var options = [];
+
+                    // Seçenekleri topla
+                    $selectAttr.find('option').each(function() {
+                        options.push({
+                            value: jQuery(this).val(),
+                            text: jQuery(this).text(),
+                            selected: jQuery(this).is(':selected')
+                        });
+                    });
+
+                    // Değeri manuel olarak ayarla ve tetikle
+                    if (options.length > 1 && (!value || value === '')) {
+                        // Boşsa ilk geçerli değeri seç
+                        var firstValidOption = options.find(o => o.value !== '');
+                        if (firstValidOption) {
+                            console.log("Manuel seçim yapılıyor:", attrName, "Değer:", firstValidOption.value);
+                            $selectAttr.val(firstValidOption.value);
+                            value = firstValidOption.value;
+                        }
+                    }
+
+                    existingAttributes[attrName] = value;
+                });
+
+                // Seçilen özellikleri topla - WP varyasyon özel seçicileri
+                $row.find('.wp-variation-attribute select').each(function() {
+                    var $select = $(this);
+                    var attrName = $select.attr('name');
+                    // Önce değeri al veya daha önce manuel tanımlanmış değeri kullan
+                    var value = $select.val() || existingAttributes[attrName] || '';
+
+                    // Değer hala boşsa ve seçenekler varsa
+                    if (value === '' || value === null) {
+                        var $options = $select.find('option[value!=""]');
+                        if ($options.length > 0) {
+                            value = $options.first().val();
+                            $select.val(value);
+                            console.log("Satır özelliği için manuel seçim:", attrName, "Değer:", value);
+                        }
+                    }
+
+                    attributes[attrName] = value;
+                });
+
+                // Console'a hangi satırda hangi özelliklerin seçildiğini yazalım
+                console.log('Satır ID:', rowId, 'Seçilen özellikler:', attributes);
+
+                // Tüm seçeneklerin dolu olup olmadığını kontrol et
+                var allSelected = true;
+                var emptyAttrs = [];
+                for (var attrName in attributes) {
+                    if (attributes[attrName] === '') {
+                        allSelected = false;
+                        emptyAttrs.push(attrName);
+                    }
+                }
+
+                // Boş seçimler için hala manuel değer atama girişimi
+                if (!allSelected && emptyAttrs.length > 0) {
+                    console.log("Hala boş olan özellikler var:", emptyAttrs);
+
+                    for (var i = 0; i < emptyAttrs.length; i++) {
+                        var emptyAttr = emptyAttrs[i];
+                        var $emptySelect = $row.find('.wp-variation-attribute select[name="' + emptyAttr + '"]');
+
+                        if ($emptySelect.length === 0) {
+                            // Ana formda arama yapılır
+                            $emptySelect = jQuery('select[name="' + emptyAttr + '"]');
+                        }
+
+                        if ($emptySelect.length > 0) {
+                            var $validOption = $emptySelect.find('option[value!=""]').first();
+                            if ($validOption.length > 0) {
+                                var newValue = $validOption.val();
+                                $emptySelect.val(newValue);
+                                attributes[emptyAttr] = newValue;
+                                console.log("Boş özellik için değer atandı:", emptyAttr, "Değer:", newValue);
+                            }
+                        }
+                    }
+
+                    // Yeniden kontrol - tüm seçimler dolduruldu mu?
+                    allSelected = true;
+                    for (var attrName in attributes) {
+                        if (attributes[attrName] === '') {
+                            allSelected = false;
+                            break;
+                        }
+                    }
+                }
+
+                // Eğer tüm seçenekler dolu değilse
+                if (!allSelected) {
+                    $row.find('.wp-variation-price').html('Seçim yapınız');
+                    $row.data('variation_id', 0);
+                    return;
+                }
+
+                // Eşleşen varyasyonu bul
+                var matchingVariation = this.findMatchingVariation(variations, attributes);
+
+                // Bulunamadıysa, varyasyonları daha detaylı incele
+                if (!matchingVariation && variations.length > 0) {
+                    console.log("Eşleşme bulunamadı, alternatif aranıyor...");
+
+                    // En yakın eşleşmeyi bulmaya çalış
+                    var bestMatch = null;
+                    var bestMatchCount = 0;
+
+                    for (var i = 0; i < variations.length; i++) {
+                        var variation = variations[i];
+                        var matchCount = 0;
+                        var variationAttributes = variation.attributes;
+
+                        for (var attrName in attributes) {
+                            var selectedValue = attributes[attrName];
+                            var variationValue = variationAttributes[attrName];
+
+                            // Tam eşleşme veya any değeri kontrolü
+                            if (selectedValue === variationValue || variationValue === '' || variationValue === '*') {
+                                matchCount++;
+                            }
+                        }
+
+                        // Daha iyi bir eşleşme bulduk mu?
+                        if (matchCount > bestMatchCount) {
+                            bestMatchCount = matchCount;
+                            bestMatch = variation;
+                        }
+                    }
+
+                    // Eğer kısmi eşleşme bulduysa, kullan
+                    if (bestMatch && bestMatchCount > 0) {
+                        matchingVariation = bestMatch;
+                        console.log("Alternatif varyasyon bulundu:", bestMatchCount, "özellik eşleşti", matchingVariation);
+
+                        // Eksik eşleşmeleri güncelle
+                        for (var attrName in attributes) {
+                            if (bestMatch.attributes[attrName] !== attributes[attrName] && bestMatch.attributes[attrName] !== '' && bestMatch.attributes[attrName] !== '*') {
+                                // Seçimi güncelle
+                                var newValue = bestMatch.attributes[attrName];
+                                var $attrSelect = $row.find('.wp-variation-attribute select[name="' + attrName + '"]');
+                                if ($attrSelect.length > 0 && $attrSelect.find('option[value="' + newValue + '"]').length > 0) {
+                                    $attrSelect.val(newValue);
+                                    attributes[attrName] = newValue;
+                                    console.log("Seçim güncellendi:", attrName, "Yeni değer:", newValue);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (matchingVariation) {
+                    // Fiyatı göster
+                    if (matchingVariation.is_in_stock && matchingVariation.is_purchasable) {
+                        // Fiyatı kontrol et ve göster
+                        if (matchingVariation.price_html) {
+                            $row.find('.wp-variation-price').html(matchingVariation.price_html);
+                        } else if (matchingVariation.display_price) {
+                            // Display price varsa basit fiyat gösterimi
+                            var price = matchingVariation.display_price;
+
+                            // Para birimi sembolü kontrolü
+                            var currencySymbol = '';
+                            if (typeof wp_variation_params !== 'undefined' && wp_variation_params.currency_symbol) {
+                                currencySymbol = wp_variation_params.currency_symbol;
+                            }
+
+                            $row.find('.wp-variation-price').html(currencySymbol + ' ' + price.toFixed(2));
+                        } else {
+                            $row.find('.wp-variation-price').html('Fiyat bilgisi alınamadı');
+                        }
+
+                        $row.data('variation_id', matchingVariation.variation_id);
+                        $row.data('variation', matchingVariation);
+
+                        // Varyasyon görselini güncelle
+                        this.updateVariationImage($row, matchingVariation);
+
+                        // Sepete ekle butonu için hazır olduğunu belirt
+                        console.log("Varyasyon seçimi tamamlandı! Ürün sepete eklenebilir:", matchingVariation.variation_id);
+
+                        // Ek kontrol - standart WooCommerce formu ile senkronizasyonu sağla
+                        if (this.$form && this.$form.length > 0) {
+                            // Ana form üzerinde seçimleri güncelle (opsiyonel)
+                            for (var attrName in attributes) {
+                                var $mainSelect = this.$form.find('select[name="' + attrName + '"]');
+                                if ($mainSelect.length > 0) {
+                                    $mainSelect.val(attributes[attrName]);
+                                }
+                            }
+
+                            // Varyasyon ID'sini ana forma aktar (opsiyonel)
+                            var $variationInput = this.$form.find('input[name="variation_id"]');
+                            if ($variationInput.length > 0) {
+                                $variationInput.val(matchingVariation.variation_id);
+                            }
+                        }
+                    } else {
+                        $row.find('.wp-variation-price').html('Stokta yok');
+                        $row.data('variation_id', 0);
+                    }
+                } else {
+                    $row.find('.wp-variation-price').html('Bu kombinasyon mevcut değil');
+                    $row.data('variation_id', 0);
+                }
+
+                // Form değişikliğini tetikle
+                if (this.$form && this.$form.length > 0) {
+                    setTimeout(function() {
+                        self.$form.trigger('woocommerce_variation_has_changed');
+                    }, 50);
+                }
+            },
+            // Varyasyon görselini güncelleme fonksiyonu
+            updateVariationImage: function($row, variation) {
+                // Her satırın kendi görseli için bir alan olduğunu varsayıyoruz
+                var $imageContainer = $row.find('.wp-variation-image-container');
+
+                if (!$imageContainer.length) {
+                    // Eğer görsel alanı yoksa, mevcut ürün görseline göre güncelleme yapalım
+                    console.log('Satır için özel görsel alanı bulunamadı');
+
+                    // Ürün sayfasındaki ana görseli bulmaya çalış
+                    var $productImage = $('.woocommerce-product-gallery__image img, .product-images img').first();
+
+                    if (variation.image && variation.image.src && $productImage.length) {
+                        // Görsel güncellemeden önce mevcut görseli kaydet
+                        if (!$productImage.data('original_src')) {
+                            $productImage.data('original_src', $productImage.attr('src'));
+                        }
+
+                        // Ana ürün görselini güncelle - önceki olandan farklıysa
+                        if ($productImage.attr('src') !== variation.image.src) {
+                            console.log('Ana ürün görseli güncelleniyor:', variation.image.src);
+                            $productImage.attr('src', variation.image.src);
+
+                            // Büyük görsel bağlantısını da güncelle
+                            if (variation.image.full_src) {
+                                $productImage.parent('a').attr('href', variation.image.full_src);
+                            }
+                        }
+                    }
+
+                    return;
+                }
+
+                // Özel görsel alanında görseli güncelle
+                if (variation.image && variation.image.src) {
+                    var imageHtml = '<img src="' + variation.image.src + '" alt="' + (variation.image.alt || '') + '" />';
+                    $imageContainer.html(imageHtml);
+                } else {
+                    // Varyasyonda görsel yoksa varsayılan görsel göster veya temizle
+                    $imageContainer.html(''); // Varsayılan görsel eklemek isterseniz burayı değiştirin
+                }
+            },
+
+// Mevcut olmayan seçenekleri filtrele
+            filterUnavailableOptions: function($row, selectedAttributes) {
+                var variations = this.getAvailableVariations();
+                var $selects = $row.find('.wp-variation-attribute select');
+
+                $selects.each(function() {
+                    var $thisSelect = $(this);
+                    var currentAttrName = $thisSelect.attr('name');
+                    var availableOptionsForThisSelect = [];
+
+                    // Bu select için değerler bulma
+                    for (var i = 0; i < variations.length; i++) {
+                        var variation = variations[i];
+                        var match = true;
+
+                        // Diğer tüm seçilmiş özelliklerin bu varyasyonla eşleşip eşleşmediğini kontrol et
+                        for (var attrName in selectedAttributes) {
+                            if (attrName !== currentAttrName && selectedAttributes[attrName] !== '') {
+                                var variationAttrValue = variation.attributes[attrName] || '';
+                                if (variationAttrValue !== '' && variationAttrValue !== selectedAttributes[attrName]) {
+                                    match = false;
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Eğer diğer seçimler eşleşiyorsa, bu seçim için değer ekle
+                        if (match) {
+                            var optionVal = variation.attributes[currentAttrName] || '';
+                            if (optionVal && !availableOptionsForThisSelect.includes(optionVal)) {
+                                availableOptionsForThisSelect.push(optionVal);
+                            }
+                        }
+                    }
+
+                    // Seçenekleri güncelle
+                    $thisSelect.find('option').each(function() {
+                        var $option = $(this);
+                        var value = $option.val();
+
+                        // Eğer değer boşsa (örn. "Seçiniz") veya mevcut seçenekler arasındaysa aktif olsun
+                        if (!value || availableOptionsForThisSelect.includes(value)) {
+                            $option.prop('disabled', false);
+                        } else {
+                            $option.prop('disabled', true);
+                        }
+                    });
+                });
+            },
+
+// Mevcut varyasyonları döndüren yardımcı fonksiyon
+            getAvailableVariations: function() {
+                if (this.$form.data('product_variations')) {
+                    return this.$form.data('product_variations');
+                } else {
+                    return [];
+                }
+            },
+
+            // Ürün görselini güncelle
+            updateProductImage: function(imageData) {
+                // Ana ürün görseli
+                var $productImage = $('.woocommerce-product-gallery__wrapper').first();
+
+                if ($productImage.length) {
+                    // Yeni görsel HTML'i
+                    var imageHtml = '<div class="woocommerce-product-gallery__image">' +
+                        '<a href="' + imageData.full_src + '">' +
+                        '<img src="' + imageData.src + '" alt="' + imageData.alt + '" class="wp-post-image" />' +
+                        '</a></div>';
+
+                    // Mevcut aktif görseli varsa, ona bir sınıf ver ve sonra değiştir
+                    var $currentImage = $productImage.find('.flex-active-slide');
+                    if ($currentImage.length) {
+                        // FlexSlider kullanılıyorsa - görsel değişimi için özel yöntem
+                        var $gallery = $('.woocommerce-product-gallery');
+                        var galleryData = $gallery.data('flexslider');
+
+                        if (galleryData) {
+                            // İlgili görselin indeksini bul ve FlexSlider'ı o görsele kaydır
+                            var targetSlide = 0;
+
+                            // Varyasyon görseli zaten galerinin içinde mi kontrol et
+                            $gallery.find('img').each(function(index) {
+                                if ($(this).attr('src') === imageData.src) {
+                                    targetSlide = index;
+                                    return false; // loop'u durdur
+                                }
+                            });
+
+                            galleryData.flexAnimate(targetSlide);
+                        } else {
+                            // Basit yedek yöntem - görseli doğrudan değiştir
+                            $currentImage.find('img').attr('src', imageData.src);
+                            $currentImage.find('a').attr('href', imageData.full_src);
+                        }
+                    } else {
+                        // FlexSlider yoksa, görseli doğrudan değiştir
+                        var $img = $productImage.find('img.wp-post-image');
+                        if ($img.length) {
+                            $img.attr('src', imageData.src).attr('srcset', '');
+                            $productImage.find('a').attr('href', imageData.full_src);
+                        }
+                    }
+                }
+
+                // Ek görselleri (küçük resimler) güncelle
+                var $thumbnails = $('.flex-control-nav.flex-control-thumbs li img');
+                if ($thumbnails.length) {
+                    $thumbnails.each(function() {
+                        var $thumb = $(this);
+                        if ($thumb.attr('src') === imageData.gallery_thumbnail_src) {
+                            $thumb.trigger('click');
+                            return false;
+                        }
+                    });
+                }
+            },
+
+            // Orijinal WooCommerce görsel değişim mekanizmasını yönet
+            handleImageChange: function() {
+                var self = this;
+
+                // WooCommerce'in görsel değişim olayını yakalama
+                this.$form.on('show_variation', function(event, variation) {
+                    // Tüm açık varyasyon satırlarının seçimlerini kontrol et
+                    var activeRow = null;
+
+                    self.$form.find('.wp-variation-row').each(function() {
+                        var $row = $(this);
+                        var variationId = $row.data('variation-id');
+
+                        // Aktif satır tespit edildi
+                        if (variationId && variationId == variation.variation_id) {
+                            activeRow = $row;
+                        }
+                    });
+
+                    // Aktif satır bulunduysa, görselini güncelle
+                    if (activeRow && variation.image) {
+                        self.updateProductImage(variation.image);
+                    }
+                });
+            },
+
+            // Olayları bağla
+            bindEvents: function() {
+                var self = this;
+
+                // Sepete ekle butonuna olay dinleyici ekleyin
+                $('.wp-variation-add-to-cart').on('click', function(e) {
+                    e.preventDefault();
+                    console.log('Sepete ekle butonuna tıklandı');
+                    self.addToCart();
+                });
+
+                // Her türlü varyasyon değişikliğini yakala
+                this.$form.on('change', 'select, input[type="radio"], input[type="checkbox"]', function() {
+                    self.updateTotalPrice();
+                });
+
+
+                // Başka varyasyon ekleme butonu
+                this.$form.find('.wp-variation-add-another').on('click', function() {
+                    self.addVariationRow(self.$form.find('.wp-variation-rows'));
+                });
+
+                this.$form.on('click', '.variation-option', function() {
+                    setTimeout(function() {
+                        self.updateTotalPrice();
+                    }, 100);
+                });
+
+                // Varyasyon sıfırlama
+                this.$form.on('click', '.reset_variations', function() {
+                    setTimeout(function() {
+                        self.updateTotalPrice();
+                    }, 100);
+                });
+
+                // Varyasyon satırı ekleme veya çıkarma
+                this.$form.on('click', '.wp-variation-add-another, .remove-variation-row', function() {
+                    setTimeout(function() {
+                        self.updateTotalPrice();
+                    }, 100);
+                });
+
+                // AJAX tamamlandıktan sonra
+                $('body').on('updated_cart_totals wc_fragments_loaded updated_checkout', function() {
+                    self.updateTotalPrice();
+                });
+
+                // Document hazır olduğunda
+                $(document).ready(function() {
+                    self.updateTotalPrice();
+                });
+
+                // Sepete ekle butonunun düzeltilmiş versiyonu
+                this.$form.find('.wp-variation-add-to-cart').on('click', function(e) {
+                    e.preventDefault();
+
+                    var $rows = self.$form.find('.wp-variation-row');
+                    var valid = true;
+                    var variations = [];
+
+                    // Tüm satırları doğrula
+                    $rows.each(function() {
+                        var $row = $(this);
+                        var variationId = $row.data('variation_id');
+                        var variation = $row.data('variation');
+
+                        // Varyasyon seçilmiş mi kontrol et
+                        if (!variationId || variationId === 0) {
+                            valid = false;
+                            // Hatayı göster
+                            $row.addClass('error');
+                            return false;
+                        }
+
+                        $row.removeClass('error');
+                        variations.push({
+                            variation_id: variationId,
+                            variation: variation
+                        });
+                    });
+
+                    if (!valid) {
+                        alert(wp_variation_params.i18n_select_options);
+                        return false;
+                    }
+
+                    // Tüm seçili varyasyonları sepete ekle
+                    self.addVariationsToCart(variations);
+                });
+
+                // Varyasyon seçildiğinde toplam fiyatı güncelle
+                this.$form.on('change', '.variation-select', function() {
+                    // Mevcut varyasyon seçme mantığı muhtemelen burada olabilir
+
+                    // Her değişiklikte toplam fiyatı güncelle
+                    self.updateTotalPrice();
+                });
+
+                // Varyasyon seçeneğine tıklandığında toplam fiyatı güncelle
+                this.$form.on('click', '.variation-option', function() {
+                    // Varolan işlemler burada olabilir
+
+                    // Toplam fiyatı güncelle
+                    self.updateTotalPrice();
+                });
+
+                // Varyasyon sıfırlama işlemleri için
+                this.$form.on('click', '.reset_variations', function() {
+                    // Varolan işlemler burada olabilir
+
+                    // Toplam fiyatı güncelle (sıfırla)
+                    self.updateTotalPrice();
+                });
+
+                // Varyasyon satırı kaldırma işlemi için
+                this.$form.on('click', '.remove-variation-row', function() {
+                    // Varolan işlemler burada olabilir
+
+                    // Toplam fiyatı güncelle
+                    setTimeout(function() {
+                        self.updateTotalPrice();
+                    }, 100); // Kısa bir gecikme ekle, böylece DOM güncellemesinin tamamlanmasını bekleyelim
+
+                });
+                $(document).on('change', '.wp-variation-select, .wp-variation-quantity', function() {
+                    self.updateTotalPrice();
+                });
+            },
+
+            // Varyasyonları sepete ekle fonksiyonu
+            addVariationsToCart: function(variations) {
+                var self = this;
+
+                if (variations.length === 0) {
+                    alert('Sepete eklenecek varyasyon bulunamadı.');
+                    return;
+                }
+
+                // İlk varyasyonu ekle - diğerleri başarılı olduğunda zincirleme eklenecek
+                this.addSingleVariationToCart(variations, 0);
+            },
+
+// Tek bir varyasyonu sepete ekler ve sonra diğerine geçer
+            addSingleVariationToCart: function(variations, index) {
+                var self = this;
+
+                if (index >= variations.length) {
+                    // İşlem tamamlandı, sepet sayfasına yönlendir
+                    window.location.href = wc_add_to_cart_params.cart_url;
+                    return;
+                }
+
+                var currentVariation = variations[index];
+
+                // AJAX verileri hazırla
+                var data = {
+                    action: 'wp_variation_add_to_cart',
+                    product_id: self.$form.find('input[name="product_id"]').val(),
+                    variation_id: currentVariation.variation_id,
+                    quantity: 1
+                };
+
+                // Varyasyon özelliklerini ekle
+                for (var attrName in currentVariation.variation.attributes) {
+                    data['attribute_' + attrName] = currentVariation.variation.attributes[attrName];
+                }
+
+                let variationsToSend = [];
+                for (let i = 0; i < variations.length; i++) {
+                    // Quantity değeri eksikse ekleyin (varsayılan olarak 1)
+                    variationsToSend.push({
+                        variation_id: variations[i].variation_id,
+                        quantity: 1, // Burada miktar değerini ekleyin veya formdan alın
+                        variation: variations[i].variation
+                    });
+                }
+            },
+            // Sepete ekle
+            addToCart: function() {
+                var self = this;
+                var variations = [];
+                var hasErrors = false;
+
+                // Debug bilgileri
+                console.log('wp_variation_params:', wp_variation_params);
+
+                // Tüm varyasyon satırlarını kontrol et
+                $('.wp-variation-row').each(function() {
+                    var $row = $(this);
+                    var $select = $row.find('select');
+                    var $quantity = $row.find('.wp-variation-quantity');
+                    var variationId = $select.val();
+                    var quantity = parseInt($quantity.val());
+
+                    // Eğer seçim yapılmamışsa hata ver
+                    if (variationId === '') {
+                        $row.addClass('error');
+                        hasErrors = true;
+                        return;
+                    }
+
+                    // Eğer adet 0 ise hata ver
+                    if (quantity <= 0 || isNaN(quantity)) {
+                        $row.addClass('error');
+                        hasErrors = true;
+                        return;
+                    }
+
+                    // Hata sınıfını kaldır
+                    $row.removeClass('error');
+
+                    // Varyasyonu varyasyonlar dizisine ekle
+                    variations.push({
+                        variation_id: variationId,
+                        quantity: quantity
+                    });
+                });
+
+                if (hasErrors || variations.length === 0) {
+                    self.showNotification(wp_variation_params.i18n_select_options, 'error');
+                    return;
+                }
+
+                // Yükleniyor bildirimini göster
+                self.showNotification('Ürünler sepete ekleniyor...', 'loading');
+
+                // AJAX verisini hazırla
+                var ajaxData = {
+                    action: 'wp_variation_add_to_cart',
+                    product_id: self.$form.find('input[name="product_id"]').val(),
+                    variations: JSON.stringify(variations),
+                    nonce: wp_variation_params.nonce
+                };
+
+                // Debug için AJAX verisini logla
+                console.log('AJAX data being sent:', ajaxData);
+
+                // AJAX isteği gönder
+                $.ajax({
+                    url: wp_variation_params.ajax_url,
+                    type: 'POST',
+                    dataType: 'json',
+                    data: ajaxData,
+                    success: function(response) {
+                        console.log('AJAX success response:', response);
+
+                        if (response.success) {
+                            // Yükleniyor bildirimini kaldır ve başarılı bildirimini göster
+                            setTimeout(function() {
+                                self.showNotification('Ürünler başarıyla sepete eklendi.', 'success');
+
+                                // WooCommerce sepet fragmanlarını güncelle
+                                $(document.body).trigger('wc_fragment_refresh');
+                                $(document.body).trigger('added_to_cart');
+                            }, 500);
+                        } else {
+                            // Yükleniyor bildirimini kaldır ve hata bildirimini göster
+                            setTimeout(function() {
+                                var errorMessage = response.data && response.data.message ?
+                                    response.data.message : wp_variation_params.i18n_error;
+                                self.showNotification(errorMessage, 'error');
+                                console.error('Error response:', response);
+                            }, 500);
+                        }
+                    },
+                    error: function(jqXHR, textStatus, errorThrown) {
+                        // Daha detaylı hata kaydı
+                        console.error('AJAX error:', jqXHR.status, textStatus, errorThrown);
+                        console.error('Response text:', jqXHR.responseText);
+
+                        // Yükleniyor bildirimini kaldır ve hata bildirimini göster
+                        setTimeout(function() {
+                            self.showNotification(wp_variation_params.i18n_error, 'error');
+                        }, 500);
+                    },
+                    complete: function() {
+                        // İstek tamamlandı
+                        console.log('AJAX request completed');
+                    }
+                });
+            }
+        };
+        // Sadece değişken ürün sayfalarında çalıştır
+        if ($('.variations_form').length) {
+            WPVariation.init();
+        }
+    });
+
+    $('.wp-variation-attribute select').on('change', function() {
+        var $row = $(this).closest('.wp-variation-row');
+        var currentAttributes = {};
+
+        // Seçilen tüm özellikleri topla
+        $row.find('.wp-variation-attribute select').each(function() {
+            var name = $(this).attr('name');
+            var value = $(this).val();
+            if (value.length > 0) {
+                currentAttributes[name] = value;
+            }
+        });
+
+        // Diğer seçimleri filtrele
+        $row.find('.wp-variation-attribute select').each(function() {
+            var $select = $(this);
+            var name = $select.attr('name');
+
+            // Eğer bu alan seçilmediyse seçenekleri filtrele
+            if (!currentAttributes[name]) {
+                filterOptions($select, currentAttributes);
+            }
+        });
+    });
+
+// Seçenekleri filtreleyen yardımcı fonksiyon
+    function filterOptions($select, selectedAttributes) {
+        // Eğer bu bir adet seçimi ise filtrelemeyi atlayalım
+        var name = $select.attr('name');
+        if (name === 'attribute_adet' || $select.closest('.wp-variation-quantity').length) {
+            return; // Adet için filtreleme yapmıyoruz
+        }
+
+        var product_variations = JSON.parse($('.variations_form').attr('data-product_variations'));
+        var availableOptions = [];
+
+        // Önce seçili özelliklerden "attribute_adet" özelliğini çıkart
+        // Çünkü bu bir varyasyon filtreleme özelliği değil
+        var filterAttributes = {};
+        for (var attr in selectedAttributes) {
+            if (attr !== 'attribute_adet') {
+                filterAttributes[attr] = selectedAttributes[attr];
+            }
+        }
+
+        // Mevcut tüm varyasyonları kontrol et
+        product_variations.forEach(function(variation) {
+            var match = true;
+
+            // Seçilen tüm özellikler bu varyasyonla eşleşiyor mu?
+            for (var selectedName in filterAttributes) {
+                // Bazı varyasyonlarda özellik boş olabilir (herhangi bir değer anlamında)
+                if (variation.attributes[selectedName] &&
+                    variation.attributes[selectedName] !== "" &&
+                    variation.attributes[selectedName] !== filterAttributes[selectedName]) {
+                    match = false;
+                    break;
+                }
+            }
+
+            // Eşleşme varsa, bu varyasyondaki özelliği kullanılabilir seçeneklere ekle
+            if (match && variation.attributes[name]) {
+                var optionValue = variation.attributes[name];
+                if (optionValue !== "" && !availableOptions.includes(optionValue)) {
+                    availableOptions.push(optionValue);
+                }
+            }
+        });
+
+        // Seçenekleri filtrele
+        $select.find('option').each(function() {
+            var $option = $(this);
+            var value = $option.val();
+
+            // Boş değeri olan seçenekler her zaman aktif kalır ("Seçiniz" gibi)
+            // Ya da mevcut varyasyonlar arasında bu değer varsa aktif kalır
+            if (!value || value === "" || availableOptions.includes(value)) {
+                $option.prop('disabled', false);
+            } else {
+                $option.prop('disabled', true);
+            }
+        });
+
+        // Eğer seçili bir değer devre dışı kaldıysa, seçimi sıfırla
+        var currentValue = $select.val();
+        if (currentValue && $select.find('option[value="' + currentValue + '"]').prop('disabled')) {
+            $select.val('').trigger('change');
+        }
+    }
+})(jQuery);
